@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orchestrator Dev Console</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+<style>
+:root{--bg:#0f1115;--panel:#171a21;--line:#262b36;--text:#e7e9ee;--muted:#8b93a7;--accent:#4f8cff;
+--solar:#f5b400;--wind:#3ec5c1;--battery:#9b7bff;--grid:#8b93a7;--demand:#ffffff;--bad:#ff5d5d;--good:#35c27f;--warn:#ffb020}
+@media (prefers-color-scheme: light){:root{--bg:#f5f6f8;--panel:#fff;--line:#e3e6ec;--text:#161a22;--muted:#5d6577;--demand:#161a22}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+h1{font-size:16px;margin:0 12px 0 0;font-weight:600}
+select,input,button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
+button{cursor:pointer}button:hover{border-color:var(--accent)}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.pill{padding:3px 10px;border-radius:99px;border:1px solid var(--line);color:var(--muted);font-size:12px}
+.pill.running{color:var(--good);border-color:var(--good)}.pill.finished{color:var(--accent);border-color:var(--accent)}
+main{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(0,1fr);gap:14px;padding:14px 16px}
+@media (max-width:1000px){main{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
+.card h2{font-size:13px;margin:0 0 8px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.kpi .l{color:var(--muted);font-size:12px}.kpi .v{font-size:20px;font-weight:600;margin-top:2px}
+.bad{color:var(--bad)}.good{color:var(--good)}.warn{color:var(--warn)}
+.chart{position:relative;height:260px}
+.chaos{display:flex;flex-wrap:wrap;gap:6px}.chaos button{font-size:12px;padding:5px 9px}
+.log{max-height:520px;overflow:auto;display:flex;flex-direction:column;gap:8px}
+.entry{border-left:3px solid var(--line);padding:4px 0 4px 10px}.entry.fb{border-color:var(--bad)}
+.entry .t{color:var(--muted);font-size:12px}.entry .a{font-weight:600}.entry ul{margin:2px 0 0 16px;padding:0;color:var(--muted);font-size:12.5px}
+.mode{font-size:11px;padding:1px 7px;border-radius:99px;background:var(--line);margin-left:6px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left}th{color:var(--muted);font-weight:500}
+.alert{padding:6px 8px;border-radius:6px;border:1px solid var(--line);margin-bottom:6px;font-size:12.5px}
+.alert.critical{border-color:var(--bad)}.alert.warning{border-color:var(--warn)}
+.stack{display:flex;flex-direction:column;gap:14px;min-width:0}
+.muted{color:var(--muted)}#toast{position:fixed;right:16px;bottom:16px;background:var(--panel);border:1px solid var(--accent);padding:10px 14px;border-radius:8px;display:none;max-width:360px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Renewable Energy Orchestrator</h1>
+  <span id="state" class="pill">connecting…</span>
+  <span id="clock" class="pill">--:--</span>
+  <select id="scenario" title="Scenario"></select>
+  <select id="agent" title="Agent"></select>
+  <input id="seed" type="number" placeholder="seed" style="width:90px">
+  <button id="reset">Reset</button>
+  <button id="play" class="primary">Play</button>
+  <button id="step">Step +1</button>
+  <select id="speed" title="Speed">
+    <option value="60">60× (15 s/step)</option><option value="300" selected>300× (3 s/step)</option>
+    <option value="900">900× (1 s/step)</option><option value="3600">3600×</option><option value="18000">18000×</option>
+  </select>
+  <a class="muted" href="/docs" target="_blank" style="margin-left:auto">API docs ↗</a>
+</header>
+
+<main>
+  <div class="stack">
+    <div class="kpis" id="kpis"></div>
+    <div class="card"><h2>Energy balance (MW) · sources above zero, storage and exports below</h2><div class="chart"><canvas id="c1"></canvas></div></div>
+    <div class="card"><h2>Battery SoC and price</h2><div class="chart"><canvas id="c2"></canvas></div></div>
+    <div class="card"><h2>Chaos buttons (inject event now)</h2><div class="chaos" id="chaos"></div></div>
+    <div class="card"><h2>Assets</h2><div id="assets"></div></div>
+    <div class="card"><h2>Scenario lab (F3)</h2>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="labScenario"></select>
+        <input id="labRuns" type="number" value="20" min="1" max="500" style="width:80px"> days
+        <button id="labRun">Run naive vs rule_based</button><span id="labStatus" class="muted"></span>
+      </div>
+      <div id="labOut" style="margin-top:10px"></div>
+    </div>
+  </div>
+  <div class="stack">
+    <div class="card"><h2>Alerts</h2><div id="alerts" class="muted">None</div></div>
+    <div class="card"><h2>Decision log</h2><div class="log" id="log"></div></div>
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmtL = v => (v/1e5).toFixed(2) + ' L';
+let cat = null, charts = {}, points = [], ws;
+
+function api(path, body){
+  return fetch('/api' + path, {method: body === undefined ? 'GET' : 'POST',
+    headers: {'Content-Type':'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)})
+    .then(async r => { const j = await r.json(); if(!r.ok) throw new Error(j.detail || r.statusText); return j; });
+}
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.style.display='block'; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',3500); }
+
+function makeCharts(){
+  const css = getComputedStyle(document.documentElement), c = n => css.getPropertyValue(n).trim();
+  const base = {animation:false,responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+    scales:{x:{ticks:{color:c('--muted'),maxTicksLimit:12},grid:{color:c('--line')}}},plugins:{legend:{labels:{color:c('--text'),boxWidth:12}}}};
+  if(!window.Chart){ $('c1').parentElement.innerHTML='<p class="muted">Chart.js failed to load (offline?). Data still streams below.</p>'; return; }
+  charts.c1 = new Chart($('c1'), {type:'line', data:{labels:[], datasets:[
+    {label:'Solar',data:[],fill:true,stack:'s',backgroundColor:c('--solar')+'aa',borderColor:c('--solar'),pointRadius:0},
+    {label:'Wind',data:[],fill:true,stack:'s',backgroundColor:c('--wind')+'aa',borderColor:c('--wind'),pointRadius:0},
+    {label:'Battery discharge',data:[],fill:true,stack:'s',backgroundColor:c('--battery')+'aa',borderColor:c('--battery'),pointRadius:0},
+    {label:'Grid import',data:[],fill:true,stack:'s',backgroundColor:c('--grid')+'66',borderColor:c('--grid'),pointRadius:0},
+    {label:'Battery charging',data:[],fill:true,stack:'n',backgroundColor:c('--battery')+'55',borderColor:c('--battery'),pointRadius:0,borderDash:[3,3]},
+    {label:'Grid export',data:[],fill:true,stack:'n',backgroundColor:c('--accent')+'55',borderColor:c('--accent'),pointRadius:0},
+    {label:'Demand served',data:[],stack:'d',borderColor:c('--demand'),borderWidth:2,pointRadius:0},
+    {label:'Unserved',data:[],stack:'u',borderColor:c('--bad'),borderWidth:2,pointRadius:0}]},
+    options:{...base, scales:{...base.scales, y:{stacked:true,ticks:{color:c('--muted')},grid:{color:c('--line')}}}}});
+  charts.c2 = new Chart($('c2'), {type:'line', data:{labels:[], datasets:[
+    {label:'B1 SoC %',data:[],borderColor:c('--battery'),pointRadius:0,yAxisID:'y'},
+    {label:'B2 SoC %',data:[],borderColor:c('--accent'),pointRadius:0,yAxisID:'y'},
+    {label:'Price ₹/MWh',data:[],borderColor:c('--warn'),pointRadius:0,yAxisID:'y1',borderDash:[4,3]}]},
+    options:{...base, scales:{...base.scales, y:{min:0,max:100,ticks:{color:c('--muted')},grid:{color:c('--line')}},
+      y1:{position:'right',ticks:{color:c('--muted')},grid:{display:false}}}}});
+}
+function redraw(){
+  if(!charts.c1) return;
+  const L = points.map(p=>p.time);
+  const d1 = charts.c1.data; d1.labels = L;
+  d1.datasets[0].data = points.map(p=>p.solar); d1.datasets[1].data = points.map(p=>p.wind);
+  d1.datasets[2].data = points.map(p=>Math.max(0,p.battery_net)); d1.datasets[3].data = points.map(p=>Math.max(0,p.grid));
+  d1.datasets[4].data = points.map(p=>Math.min(0,p.battery_net)); d1.datasets[5].data = points.map(p=>Math.min(0,p.grid));
+  d1.datasets[6].data = points.map(p=>p.demand); d1.datasets[7].data = points.map(p=>p.unserved);
+  charts.c1.update();
+  const d2 = charts.c2.data; d2.labels = L;
+  d2.datasets[0].data = points.map(p=>p.soc_B1*100); d2.datasets[1].data = points.map(p=>p.soc_B2*100);
+  d2.datasets[2].data = points.map(p=>p.price); charts.c2.update();
+}
+
+function renderStatus(s){
+  $('state').textContent = s.state + (s.agent ? ' · ' + s.agent : ''); $('state').className = 'pill ' + s.state;
+  $('clock').textContent = (s.label || '') + ' · ' + (s.scenario_name || '');
+  $('play').textContent = s.state === 'running' ? 'Pause' : 'Play';
+  if(s.scenario) $('scenario').value = s.scenario; if(s.agent) $('agent').value = s.agent;
+  if(s.speed) { const opt=[...$('speed').options].find(o=>+o.value===s.speed); if(opt) $('speed').value = s.speed; }
+}
+function renderKpis(k){
+  if(!k) return; const m=k.money, e=k.energy, p=k.percent, c=k.carbon;
+  const items = [['Profit', '₹'+fmtL(m.profit)], ['Net energy cost', '₹'+fmtL(m.net_energy_cost)],
+    ['Unserved', e.unserved_mwh.toFixed(1)+' MWh', e.unserved_mwh>0.01?'bad':'good'],
+    ['Curtailed', e.curtailed_mwh.toFixed(1)+' MWh', e.curtailed_mwh>0.5?'warn':''],
+    ['CO₂', c.co2_t.toFixed(0)+' t'], ['Clean share', p.clean_share_pct.toFixed(1)+'%'],
+    ['Deviation (DSM)', '₹'+fmtL(m.dsm_cost)], ['Objective', '₹'+fmtL(k.objective.total)]];
+  $('kpis').innerHTML = items.map(([l,v,cl])=>`<div class="kpi"><div class="l">${l}</div><div class="v ${cl||''}">${v}</div></div>`).join('');
+}
+function renderAlerts(obs){
+  const a = (obs && obs.alerts) || [];
+  $('alerts').innerHTML = a.length ? a.map(x=>`<div class="alert ${x.severity}"><b>${x.title}</b> <span class="muted">[${x.status}${x.starts_in_steps?' · in '+(x.starts_in_steps*15)+' min':''}]</span><br>${x.bulletin||''}</div>`).join('') : '<span class="muted">None</span>';
+}
+function renderAssets(obs){
+  if(!obs) return; const c = obs.current;
+  const row = (id,a,extra) => `<tr><td>${id}</td><td>${a.name}</td><td>${extra}</td><td class="${a.status==='online'?'':'bad'}">${a.status}</td></tr>`;
+  let h = '<table><tr><th>ID</th><th>Asset</th><th>Now</th><th>Status</th></tr>';
+  for(const [id,a] of Object.entries(c.solar)) h += row(id,a,`${a.available_mw.toFixed(1)} / ${a.capacity_mw} MW`);
+  for(const [id,a] of Object.entries(c.wind)) h += row(id,a,`${a.available_mw.toFixed(1)} / ${a.capacity_mw} MW · ${a.wind_speed_ms} m/s`);
+  for(const [id,b] of Object.entries(c.batteries)) h += row(id,b,`SoC ${(b.soc*100).toFixed(0)}% · reserve ${(b.reserve_soc*100).toFixed(0)}%`);
+  for(const [id,l] of Object.entries(c.grid.lines)) h += row(id,l,`${l.rating_mw} / ${l.capacity_mw} MW`);
+  h += `</table><p class="muted">Price ₹${c.market.price.toLocaleString()}/MWh · Grid ${c.grid.frequency_hz} Hz · Net position ${c.net_position_mw.toFixed(1)} MW · Import limit ${c.grid.import_limit_mw} MW</p>`;
+  $('assets').innerHTML = h;
+}
+function logEntry(e){
+  const div = document.createElement('div'); div.className = 'entry' + (e.fallback?' fb':'');
+  div.innerHTML = `<div class="t">${e.label}<span class="mode">${e.mode}</span></div><div class="a">${e.actions.join(' · ')}</div><ul>${e.reasons.map(r=>`<li>${r}</li>`).join('')}</ul>`;
+  $('log').prepend(div); while($('log').children.length > 200) $('log').lastChild.remove();
+}
+
+function onMessage(m){
+  if(m.type === 'snapshot'){
+    cat = m.catalog;
+    $('scenario').innerHTML = cat.scenarios.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
+    $('labScenario').innerHTML = cat.scenarios.map(s=>`<option value="${s.id}" ${s.id==='chaos_monkey'?'selected':''}>${s.name}</option>`).join('');
+    $('agent').innerHTML = cat.agents.map(a=>`<option value="${a.name}">${a.label}</option>`).join('');
+    $('chaos').innerHTML = Object.values(cat.events).map(e=>`<button title="${e.description}" data-t="${e.type}">${e.label}</button>`).join('');
+    points = m.chart || []; $('log').innerHTML=''; (m.decisions||[]).forEach(logEntry);
+    renderStatus(m.status); renderKpis(m.kpis); renderAlerts(m.observation); renderAssets(m.observation); redraw();
+  } else if(m.type === 'tick'){
+    points.push(m.point); logEntry(m.log); renderStatus(m.status); renderKpis(m.kpis);
+    renderAlerts(m.observation); renderAssets(m.observation); redraw();
+  } else if(m.type === 'event'){
+    toast('Event: ' + m.event.title); renderAlerts(m.observation); renderAssets(m.observation);
+  } else if(m.type === 'status'){ renderStatus(m.status);
+  } else if(m.type === 'lab_progress'){ $('labStatus').textContent = 'running… ' + Math.round(m.progress*100) + '%';
+  } else if(m.type === 'error'){ toast('Error: ' + m.message); }
+}
+function connect(){
+  ws = new WebSocket((location.protocol==='https:'?'wss':'ws') + '://' + location.host + '/ws');
+  ws.onmessage = ev => onMessage(JSON.parse(ev.data));
+  ws.onclose = () => { $('state').textContent = 'disconnected – retrying'; setTimeout(connect, 1500); };
+}
+
+$('reset').onclick = () => api('/sim/reset', {scenario:$('scenario').value, agent:$('agent').value,
+  seed: $('seed').value ? +$('seed').value : null, speed:+$('speed').value}).catch(e=>toast(e.message));
+$('play').onclick = () => api($('play').textContent==='Pause' ? '/sim/pause' : '/sim/start', {}).catch(e=>toast(e.message));
+$('step').onclick = () => api('/sim/step', {steps:1}).catch(e=>toast(e.message));
+$('speed').onchange = () => api('/sim/speed', {speed:+$('speed').value});
+$('agent').onchange = () => api('/sim/agent', {agent:$('agent').value}).then(()=>toast('Agent switched to ' + $('agent').value));
+$('chaos').onclick = ev => { const t = ev.target.dataset.t; if(t) api('/events', {type:t}).catch(e=>toast(e.message)); };
+$('labRun').onclick = async () => {
+  try {
+    const job = await api('/lab/runs', {scenario:$('labScenario').value, agents:['naive','rule_based'], runs:+$('labRuns').value});
+    $('labStatus').textContent = 'running…';
+    const poll = async () => {
+      const j = await api('/lab/runs/' + job.job_id);
+      if(j.status === 'running') return setTimeout(poll, 800);
+      if(j.status !== 'finished') { $('labStatus').textContent = 'failed: ' + j.error; return; }
+      $('labStatus').textContent = `done in ${j.result.elapsed_s}s`;
+      const S = j.result.summary, rows = [['Profit (mean)', a=>'₹'+fmtL(S[a].metrics.profit.mean)],
+        ['Objective (mean)', a=>'₹'+fmtL(S[a].metrics.objective_total.mean)],
+        ['Days with load shed', a=>`${S[a].days_with_load_shed} / ${S[a].runs}`],
+        ['Unserved total', a=>S[a].total_unserved_mwh.toFixed(1)+' MWh'],
+        ['Curtailed (mean)', a=>S[a].metrics.curtailed_mwh.mean.toFixed(1)+' MWh'],
+        ['CO₂ (mean)', a=>S[a].metrics.co2_t.mean.toFixed(0)+' t']];
+      const ags = j.result.agents, cmp = j.result.comparisons[ags[1]];
+      $('labOut').innerHTML = `<table><tr><th></th>${ags.map(a=>`<th>${a}</th>`).join('')}</tr>` +
+        rows.map(([l,f])=>`<tr><td>${l}</td>${ags.map(a=>`<td>${f(a)}</td>`).join('')}</tr>`).join('') +
+        `</table><p class="muted">${ags[1]} beats ${ags[0]} on objective in ${(cmp.objective_total.win_rate*100).toFixed(0)}% of days.</p>`;
+    };
+    poll();
+  } catch(e){ toast(e.message); }
+};
+makeCharts(); connect();
+</script>
+</body>
+</html>
