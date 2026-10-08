@@ -1,8 +1,8 @@
-# Renewable Energy Orchestrator
+# Sutradhar: Renewable Energy Orchestrator
 
 **ET AI Hackathon: Agentic Edition (Accenture × Economic Times) · Problem 4 · Utilities**
 
-An autonomous agent that runs a renewable-energy portfolio (solar, wind, batteries, grid and market) every 15 minutes, reacts to storms, faults and price spikes, and explains every decision. An LLM judges risk and reads bulletins and operator notes; a digital twin tests candidate plans before anything is applied; guardrails and a rule-based fallback keep the grid safe if the model fails. It runs on free LLMs (Groq, Gemini, OpenRouter, local Ollama) or fully offline.
+**Sutradhar** (सूत्रधार, "the one who holds the strings") is an autonomous agent that runs a renewable-energy portfolio (solar, wind, batteries, grid and market) every 15 minutes, reacts to storms, faults and price spikes, and explains every decision. An LLM judges risk and reads bulletins and operator notes; a digital twin tests candidate plans before anything is applied; guardrails and a rule-based fallback keep the grid safe if the model fails. It runs on free LLMs (Groq, Gemini, OpenRouter, local Ollama) or fully offline.
 
 | | |
 |---|---|

@@ -364,7 +364,7 @@ export default function App() {
       <header className="top">
         <div className="brand">
           <div className="logo">⚡</div>
-          <div><h1>Renewable Energy Orchestrator</h1><div className="small muted">Agentic control room · 5 solar · 3 wind · 2 batteries · 2 tie-lines</div></div>
+          <div><h1>Sutradhar</h1><div className="small muted">Renewable Energy Orchestrator · agentic control room · 5 solar · 3 wind · 2 batteries · 2 tie-lines</div></div>
         </div>
         <div className="clock">
           <span className={`live ${st.connected ? (s?.state === 'running' ? 'on' : '') : 'off'}`} />
