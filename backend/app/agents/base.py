@@ -36,5 +36,9 @@ class Agent(ABC):
         """True if the agent implements decide_sync (fast path for batch simulation)."""
         return type(self).decide_sync is not Agent.decide_sync
 
+    def instruct(self, text: str) -> dict:
+        """Plain-language operator guidance. Agents that can't use it simply ignore it."""
+        return {"accepted": False, "reason": f"{self.label} does not take instructions"}
+
     def info(self) -> dict:
         return {"name": self.name, "label": self.label, "description": self.description}

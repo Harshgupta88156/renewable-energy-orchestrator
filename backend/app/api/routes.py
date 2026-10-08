@@ -6,7 +6,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from ..runtime.session import SimulationSession, catalog
-from .schemas import AgentRequest, EventRequest, LabRequest, ResetRequest, SpeedRequest, StepRequest
+from .schemas import AgentRequest, EventRequest, InstructionRequest, LabRequest, ResetRequest, SpeedRequest, StepRequest
 
 router = APIRouter(prefix="/api")
 ws_router = APIRouter()
@@ -68,6 +68,11 @@ async def ticks(request: Request, since: int = 0, limit: int = 96):
     return [{k: v for k, v in t.items() if k != "kpi_delta"} for t in out]
 
 
+@router.get("/baseline", tags=["simulation"], summary="Reference agents on the same day (for live comparison)")
+async def baseline(request: Request):
+    return await asyncio.to_thread(_session(request).baseline)
+
+
 @router.get("/kpis", tags=["simulation"])
 async def kpis(request: Request):
     s = _session(request)
@@ -115,6 +120,11 @@ async def agent(body: AgentRequest, request: Request):
         return await _session(request).set_agent(body.agent)
     except KeyError as e:
         raise _bad(e)
+
+
+@router.post("/agent/instruction", tags=["control"], summary="Give the agent plain-language guidance (LLM planner)")
+async def instruction(body: InstructionRequest, request: Request):
+    return await _session(request).instruct(body.text)
 
 
 # ------------------------------------------------------------------ events

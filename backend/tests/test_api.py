@@ -106,3 +106,14 @@ def test_slow_agent_times_out_and_never_blocks(client):
     finally:
         session.settings = old
         AGENT_CLASSES.pop("slow", None)
+
+
+def test_baseline_and_dashboard(client):
+    client.post("/api/sim/reset", json={"scenario": "normal_day", "seed": 3})
+    b = client.get("/api/baseline").json()
+    assert set(b["agents"]) == {"naive", "rule_based"}
+    assert len(b["agents"]["rule_based"]["objective_curve"]) == 96
+    snap = client.get("/api/snapshot").json()
+    assert "planner" in snap and "instructions" in snap
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code in (200, 307)

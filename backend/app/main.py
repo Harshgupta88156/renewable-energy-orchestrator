@@ -12,7 +12,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api.routes import router, ws_router
@@ -53,6 +53,18 @@ app.include_router(ws_router)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
+DASHBOARD = STATIC / "dashboard"
+if DASHBOARD.exists():  # React dashboard (built from /frontend)
+    app.mount("/dashboard", StaticFiles(directory=DASHBOARD, html=True), name="dashboard")
+
+
 @app.get("/", include_in_schema=False)
+async def home():
+    if (DASHBOARD / "index.html").exists():
+        return RedirectResponse("/dashboard/")
+    return FileResponse(STATIC / "index.html")
+
+
+@app.get("/console", include_in_schema=False)
 async def console():
     return FileResponse(STATIC / "index.html")

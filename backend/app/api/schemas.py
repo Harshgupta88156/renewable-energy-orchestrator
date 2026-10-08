@@ -23,6 +23,10 @@ class AgentRequest(BaseModel):
     agent: str
 
 
+class InstructionRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=300, description="Plain-language guidance for the agent")
+
+
 class StepRequest(BaseModel):
     steps: int = Field(1, ge=1, le=672)
 

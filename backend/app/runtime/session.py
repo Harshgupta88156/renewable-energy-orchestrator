@@ -88,6 +88,7 @@ class SimulationSession:
         self._lock = asyncio.Lock()
         self.sim: Simulator | None = None
         self.agent = None
+        self.instructions: list[str] = []
         self.run_id = ""
         self.chart: list[dict] = []
         self.decision_log: list[dict] = []
@@ -109,6 +110,7 @@ class SimulationSession:
         await self._stop_loop()
         async with self._lock:
             self.agent, self.sim = new_agent, new_sim
+            self.instructions = []
             if speed is not None:
                 self.speed = float(min(max(speed, MIN_SPEED), MAX_SPEED))
             self.run_id = uuid.uuid4().hex[:12]
@@ -157,9 +159,20 @@ class SimulationSession:
 
     async def set_agent(self, name: str) -> dict:
         self.agent = create_agent(name)
+        for note in self.instructions:
+            self.agent.instruct(note)
         self.agent.reset()
         await self._broadcast_status()
         return self.status()
+
+    async def instruct(self, text: str) -> dict:
+        """Operator note for the agent (e.g. "cyclone warning tonight, protect the hospital feeder")."""
+        if self.agent is None:
+            await self.reset()
+        self.instructions = (self.instructions + [text.strip()[:300]])[-10:]
+        res = self.agent.instruct(text)
+        await self.hub.broadcast({"type": "instruction", "text": text, "agent": self.agent.name, "result": res})
+        return {"agent": self.agent.name, **res}
 
     async def inject_event(self, etype: str, params: dict | None, start_in_steps: int = 0,
                            duration_steps: int | None | str = "default", announce_in_steps: int | None = None,
@@ -265,6 +278,7 @@ class SimulationSession:
                 decision = self._fallback_decision(obs, str(e))
                 tick = sim.apply_decision(decision, latency_ms=latency, fallback=True)
             point = chart_point(tick)
+            point["objective"] = round(sim.kpis.summary()["objective"]["total"])
             self.chart.append(point)
             entry = {"step": tick["step"], "time": tick["time"], "label": tick["label"], "agent": tick["agent"],
                      "mode": tick["mode"], "reasons": tick["reasons"], "actions": action_summary(tick),
@@ -279,6 +293,7 @@ class SimulationSession:
                 "kpis": sim.kpis.summary(),
                 "observation": None if sim.done else sim.observe(),
                 "events": sim.event_timeline(),
+                "planner": getattr(self.agent, "directive", None),
             }
             this_run, summary = self.run_id, (sim.summary() if sim.done else None)
         # persistence and broadcasting happen outside the lock
@@ -315,7 +330,26 @@ class SimulationSession:
             "decisions": self.decision_log[-50:],
             "events": sim.event_timeline() if sim else [],
             "kpis": sim.kpis.summary() if sim else None,
+            "planner": getattr(self.agent, "directive", None),
+            "instructions": self.instructions[-5:],
         }
+
+    def baseline(self) -> dict:
+        """Same day (scenario events, same seed) replayed by the reference agents, for live comparison.
+        Cached per run; injected events are not replayed."""
+        sim = self.sim
+        key = (sim.scenario.id, sim.seed, sim.days)
+        if getattr(self, "_baseline_key", None) != key:
+            out = {}
+            for name in ("naive", "rule_based"):
+                b = Simulator(sim.scenario, seed=sim.seed, days=sim.days, keep_history=False)
+                agent, curve = create_agent(name), []
+                while not b.done:
+                    b.apply_decision(agent.decide_sync(b.observe()))
+                    curve.append(round(b.kpis.summary()["objective"]["total"]))
+                out[name] = {"kpis": b.kpis.summary(), "objective_curve": curve}
+            self._baseline_key, self._baseline = key, out
+        return {"scenario": key[0], "seed": key[1], "agents": self._baseline}
 
     async def _broadcast_status(self) -> None:
         await self.hub.broadcast({"type": "status", "status": self.status()})
