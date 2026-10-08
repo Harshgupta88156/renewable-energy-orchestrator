@@ -30,8 +30,14 @@ def lakh(v: float) -> str:
 def simulate(scenario: str, agent_name: str, seed: int | None, days: int, verbose: bool = False) -> Simulator:
     sim = Simulator(get_scenario(scenario), seed=seed, days=days)
     agent = create_agent(agent_name)
+    sim.agent_obj = agent
+    last_err = None
     while not sim.done:
         tick = sim.apply_decision(agent.decide_sync(sim.observe()))
+        err = getattr(agent, "last_error", None)
+        if verbose and err and err != last_err:
+            print(f"{'':10}!! LLM error: {err}")
+        last_err = err
         if verbose:
             f = tick["flows"]
             socs = " ".join(f"{k}={v['soc'] * 100:3.0f}%" for k, v in tick["applied"]["batteries"].items())
@@ -70,10 +76,40 @@ def cmd_scenarios(_args) -> None:
     print("Agents:", ", ".join(AGENT_CLASSES))
 
 
+def cmd_llm_check(args) -> None:
+    """One tiny test call to the configured free LLM (checks key, network, tool calling)."""
+    import time
+    from .agents.llm_providers import make_client, tool_calls
+    c = make_client()
+    if c is None:
+        print("No LLM key found (GROQ_API_KEY / GEMINI_API_KEY / OPENROUTER_API_KEY): planner runs offline.")
+        return
+    print(f"Provider {c.name}, model {c.model}, url {c.base_url}")
+    t0 = time.time()
+    try:
+        msg, usage = c.chat([{"role": "user", "content": "Call ping with ok=true."}],
+                            [{"name": "ping", "parameters": {"type": "object", "properties": {"ok": {"type": "boolean"}}}}])
+        print(f"OK in {time.time() - t0:.1f}s with model {c.model}, tokens {usage}, tool call: {tool_calls(msg)}")
+    except Exception as e:
+        print(f"FAILED: {type(e).__name__}: {e}")
+        try:
+            print("Models this key can use:", ", ".join(c.available_models()))
+            print("Pick one with:  $env:REO_LLM_MODEL=\"<model id>\"")
+        except Exception:
+            pass
+
+
 def cmd_run(args) -> None:
     sim = simulate(args.scenario, args.agent, args.seed, args.days, args.verbose)
     print(f"\n{sim.scenario.name} | agent={args.agent} | seed={sim.seed} | days={sim.days}\n")
     print_kpis([(args.agent, sim.kpis.summary())])
+    a = sim.agent_obj
+    if hasattr(a, "tokens"):
+        prov = f"{a.client.name} / {a.client.model}" if a.client else "offline (no LLM key found)"
+        print(f"\nPlanner: {prov} | LLM calls {a.calls} | tokens in {a.tokens['in']} out {a.tokens['out']} | "
+              f"errors {a.errors} | skipped (free-tier budget) {a.skipped} | twin overrides {a.overrides}")
+        if a.last_error:
+            print(f"Last LLM error: {a.last_error}")
     if args.csv:
         points = [chart_point(t) for t in sim.history]
         with open(args.csv, "w", newline="", encoding="utf-8") as fh:
@@ -128,9 +164,15 @@ def cmd_lab(args) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    for stream in (sys.stdout, sys.stderr):  # ₹ and · print correctly on Windows consoles and files
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
     p = argparse.ArgumentParser(prog="python -m app.cli", description="Renewable Energy Orchestrator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("scenarios", help="List scenarios and agents").set_defaults(fn=cmd_scenarios)
+    sub.add_parser("llm-check", help="Test the free LLM connection").set_defaults(fn=cmd_llm_check)
 
     r = sub.add_parser("run", help="Run one scenario with one agent")
     r.add_argument("--scenario", default="storm_alert", choices=list(SCENARIOS))
