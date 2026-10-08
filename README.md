@@ -66,7 +66,7 @@ flowchart TB
     RB[rule_based - baseline + safety fallback]
     NV[naive - no intelligence]
     OPT[optimizer - next]
-    LLM[LLM planner - next]
+    LLM[Agentic planner - LLM + digital twin]
   end
   subgraph W[Simulated world]
     SIM[Simulator: physics, protection, settlement]
@@ -102,7 +102,7 @@ backend/app/
     engine.py          Simulator: observe(), apply_decision(), forecasts, settlement
     decision.py        the action vocabulary (tolerant JSON parsing for LLM output)
     kpis.py            KPIs + the objective function
-  agents/              naive.py, rule_based.py, base.py (interface), __init__.py (registry)
+  agents/              naive.py, rule_based.py, llm_planner.py, llm_providers.py, twin.py, base.py (interface), __init__.py (registry)
   runtime/             session.py (clock loop + fallback), hub.py (WebSocket), lab.py (Monte Carlo)
   api/                 routes.py, schemas.py
   store/db.py          SQLite audit log (runs, ticks, events, lab jobs)
@@ -167,6 +167,64 @@ Every run is scored with one money-denominated objective (lower is better). It i
 With default weights, minimising the objective equals maximising profit. An agent, such as the LLM planner, can change the weights per situation, for example "storm → reliability first". We always report both its own weighted score and the default score, so runs stay comparable.
 
 ---
+
+## Dashboard (React)
+
+`uvicorn app.main:app --port 8000` then open **http://localhost:8000** (the old dev console moved to `/console`).
+
+* **Controls**: scenario, agent, seed, play/pause/step, speed.
+* **KPI tiles**: profit, live saving vs the rule-based agent on the *same* day, unserved energy, clean share, CO₂.
+* **Charts**: supply vs demand (storm windows shaded), battery charge, market price, and running cost of this agent vs rule-based and naive replays of the same day (`GET /api/baseline`).
+* **Agent brain**: risk level, chosen plan, LLM reasoning and the digital-twin table of plans it tested.
+* **Talk to the agent**: plain-language operator notes (`POST /api/agent/instruction`), and an event injector.
+
+The built files live in `backend/app/static/dashboard`, so no Node.js is needed to run it. To change the UI: `cd frontend && npm install && npm run dev` (proxies to the backend on :8000), then `npm run build`.
+
+## Agentic planner (`llm_planner`): LLM + digital twin
+
+```
+perceive ──► simulate ──► reason ──► verify ──► act
+ brief:       digital twin   LLM judges risk,   guardrails:      plan configures
+ state,       tests 9+ plans  picks a plan,      risk can only    the dispatcher;
+ forecasts,   in expected &   may ask the twin   go UP; plan must physics guard and
+ bulletins,   stress worlds   to test variants,  match the twin's rule fallback stay
+ operator                     explains why       best within 0.2%
+ notes
+```
+
+* **Digital twin** (`agents/twin.py`): built only from the observation (current state + published forecast), never from the simulator's hidden truth. It rolls the real dispatcher forward 12 h for each candidate plan (battery reserve floor, arbitrage style, risk look-ahead) and prices energy, carbon, demand-side actions, battery wear and blackouts.
+* **LLM** (`agents/llm_providers.py`): any free OpenAI-compatible model, standard library only, with a tokens-per-minute budget and 429 back-off so free tiers are never exceeded. About 12 calls per simulated day, ~1.5k tokens each.
+* **Operator in the loop**: `POST /api/agent/instruction {"text": "Cyclone warning tonight, keep batteries full"}`. The note goes into the next brief and triggers an immediate re-plan.
+* **Never stuck**: no key, no internet, over budget or a bad reply? It runs perceive → simulate → verify → act without the LLM ("auto" mode) and logs why.
+
+| Provider (`REO_LLM_PROVIDER`) | Cost | Set | Default model |
+|---|---|---|---|
+| `groq` | free tier, no card | `GROQ_API_KEY` | openai/gpt-oss-120b (auto-switches if retired) |
+| `gemini` | free tier | `GEMINI_API_KEY` | gemini-2.5-flash |
+| `openrouter` | free `:free` models | `OPENROUTER_API_KEY` | meta-llama/llama-3.3-70b-instruct:free |
+| `ollama` | free, local, offline | nothing (run `ollama pull qwen2.5:7b`) | qwen2.5:7b |
+| `mock` / no key | free | nothing | offline planner (twin + guardrails only) |
+
+`auto` (default) uses the first free key it finds, else offline. For CLI and lab runs on a free tier, set `REO_LLM_WAIT=1` so the agent waits for the token budget instead of skipping the model (a 1-day run then takes a few minutes). For a slow local model, also set `REO_LLM_TIMEOUT=25 REO_DECISION_TIMEOUT=30`.
+
+**Results (scenario lab, 20 randomised days per scenario, same days for both agents, offline mode):**
+
+| Scenario | Planner better on | Saving per day | Unserved energy (rules → planner) |
+|---|---|---|---|
+| Random chaos | 85% of days | ₹2.02 L | 159.7 → 136.9 MWh (−14%) |
+| Evening storm | 60% | ₹1.08 L | 75.6 → 57.4 MWh (−24%) |
+| Monsoon clouds | 95% | ₹0.84 L | 0 → 0 |
+| Normal day | 80% | ₹0.65 L | 0 → 0 |
+| Grid congestion | 85% | ₹0.64 L | 0 → 0 |
+| Heatwave peak | 70% | ₹0.40 L | 27.7 → 27.7 MWh |
+
+These gains come from the twin + guardrails alone (no LLM). The LLM adds judgement on bulletins and operator notes, and the explanations; measure your model with the lab command below.
+
+```bash
+export GROQ_API_KEY=gsk_...            # free at console.groq.com
+python -m app.cli run --scenario storm_alert --agent llm_planner --verbose
+python -m app.cli lab --scenario storm_alert --agents rule_based,llm_planner --runs 20
+```
 
 ## Current results (rule-based vs naive, same days)
 
