@@ -39,6 +39,12 @@ class RuleBasedAgent(Agent):
                    "builds battery reserve ahead of forecast shortfalls (P10/P90), uses DR / load shifting "
                    "when the grid is constrained, and dispatches crews. Also the safety fallback.")
 
+    # strategy knobs: a planner (LLM strategist + digital twin) may change these per situation
+    reserve_floor: float = NORMAL_RESERVE
+    cheap_q: float = CHEAP_Q
+    dear_q: float = EXPENSIVE_Q
+    risk_lookahead: int = RISK_LOOKAHEAD
+
     def decide_sync(self, obs: dict) -> Decision:
         cur, fc = obs["current"], obs["forecast"]
         mkt, grid = cur["market"], cur["grid"]
@@ -57,13 +63,13 @@ class RuleBasedAgent(Agent):
         H = fc["horizon_steps"]
         eff_fc = (np.array(fc["price"]["p50"]) + np.array(fc["grid_ef"]) * np.array(fc["carbon_price"]))
         ref = np.concatenate(([eff_now], eff_fc[:PRICE_WINDOW]))
-        cheap, dear = np.quantile(ref, CHEAP_Q), np.quantile(ref, EXPENSIVE_Q)
+        cheap, dear = np.quantile(ref, self.cheap_q), np.quantile(ref, self.dear_q)
 
         # ---------------------------------------------------------------- maintenance
         self._maintenance(obs, d)
 
         # ---------------------------------------------------------------- risk look-ahead
-        h = min(RISK_LOOKAHEAD, H)
+        h = min(self.risk_lookahead, H)
         ren_p10 = np.array(fc["solar_total_mw"]["p10"][:h]) + np.array(fc["wind_total_mw"]["p10"][:h])
         dem_p90 = np.array(fc["demand_total_mw"]["p90"][:h])
         gap = np.maximum(0.0, dem_p90 - ren_p10 - np.array(fc["import_limit_mw"][:h]))
@@ -79,13 +85,13 @@ class RuleBasedAgent(Agent):
             share = b["effective_energy_mwh"] / cap_total
             if target_mwh > 1.0:
                 r = b["soc_min"] + target_mwh * share / (b["effective_energy_mwh"] * b["eta_discharge"])
-                reserve[bid] = float(np.clip(r, NORMAL_RESERVE, b["soc_max"]))
+                reserve[bid] = float(np.clip(r, self.reserve_floor, b["soc_max"]))
             else:
-                reserve[bid] = NORMAL_RESERVE
+                reserve[bid] = self.reserve_floor
         if target_mwh > 1.0:
             d.mode = "reliability_prep"
             first = int(np.argmax(gap > 0))
-            why.append(f"Risk: up to {need_mwh:.0f} MWh beyond grid limits in next 6 h "
+            why.append(f"Risk: up to {need_mwh:.0f} MWh beyond grid limits in next {h * dt:.0f} h "
                        f"(from {fc['times'][first]}); holding {target_mwh:.0f} MWh battery reserve")
         if over_now > 0:
             d.mode = "shortfall"
