@@ -3,10 +3,11 @@ the dashboard agent picker, the CLI and the scenario lab automatically."""
 from __future__ import annotations
 
 from .base import Agent
+from .llm_planner import LLMPlannerAgent
 from .naive import NaiveAgent
 from .rule_based import RuleBasedAgent
 
-AGENT_CLASSES: dict[str, type[Agent]] = {cls.name: cls for cls in (NaiveAgent, RuleBasedAgent)}
+AGENT_CLASSES: dict[str, type[Agent]] = {cls.name: cls for cls in (NaiveAgent, RuleBasedAgent, LLMPlannerAgent)}
 FALLBACK_AGENT = "rule_based"
 
 
