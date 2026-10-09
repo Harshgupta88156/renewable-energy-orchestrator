@@ -58,7 +58,7 @@ if DASHBOARD.exists():  # React dashboard (built from /frontend)
     app.mount("/dashboard", StaticFiles(directory=DASHBOARD, html=True), name="dashboard")
 
 
-@app.get("/", include_in_schema=False)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def home():
     if (DASHBOARD / "index.html").exists():
         return RedirectResponse("/dashboard/")

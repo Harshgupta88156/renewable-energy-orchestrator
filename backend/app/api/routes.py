@@ -23,7 +23,7 @@ def _bad(e: Exception) -> HTTPException:
 
 
 # ------------------------------------------------------------------ info
-@router.get("/health", tags=["info"])
+@router.api_route("/health", methods=["GET", "HEAD"], tags=["info"])
 async def health():
     return {"ok": True}
 
