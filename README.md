@@ -10,6 +10,8 @@
 | **Stack** | Python 3.11 · FastAPI · NumPy · SQLite · React 18 + Recharts · any OpenAI-compatible LLM |
 | **Cost to run** | ₹0: free LLM tiers or no LLM at all |
 
+**Live demo:** [sutradhar-0x5v.onrender.com](https://sutradhar-0x5v.onrender.com) (free tier: the first load can take about a minute)
+
 **Team Qualimatrix:** Harsh Gupta ([@Harshgupta88156](https://github.com/Harshgupta88156)) · Anas Khan ([@Anas2604-web](https://github.com/Anas2604-web)) · Darpan Porwal ([@darpanp-gh](https://github.com/darpanp-gh))
 
 ## Contents
